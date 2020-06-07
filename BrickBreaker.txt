@@ -1,0 +1,627 @@
+
+;Luca Arrighetti, ?/05/2020
+
+
+JMP boot
+JMP isr
+
+status:
+    DB 0    ; 0 - waiting, 1 - timer , 2 - key, 4 - reset, 8 - exit
+key:
+    DB 0    ; The number of the last key that was pressed.
+    
+boot:
+    MOV SP, 0x0EDF      
+    MOV A, 8192         
+    OUT 3
+    MOV A, 3            
+    OUT 0
+    STI                
+    JMP gamestart    
+    
+shutdown:
+    CLI
+    HLT
+
+isr:
+    PUSH A              ; We need register A for I/O operations.
+    PUSH B              ; We need register B to change status.
+    IN 1                ; Check which interrupt happened.
+    AND A, 1            ; Mask the keyboard bit.
+    CMP A, 1            ; Is it keyboard?
+    JNE chtimer         ; If not, check timer.
+    IN 6                ; Read the key.
+    
+chkreset:
+    CMP A, 0x2A         ; Check if reset.
+    JNE chkexit
+    MOVB BL, [status]   ; Set reset status.
+    ORB BL, 4
+    MOVB [status], BL
+    JMP setkeyhandelled ; No need to store the key code.
+    
+chkexit:
+    CMP A, 0x23         ; Check if exit.
+    JNE storekey
+    MOVB BL, [status]   ; Set exit status.
+    ORB BL, 8
+    MOVB [status], BL
+    JMP setkeyhandelled ; No need to store the key code.
+    
+storekey:
+    MOVB [key], AL      ; Store the key.
+    MOVB BL, [status]   ; Set key pressed status.
+    ORB BL, 2
+    MOVB [status], BL
+    
+setkeyhandelled:
+    MOV A, 1            ; Set keyboard interrupt handelled.
+    OUT 2
+    
+chtimer:
+    IN 1                ; Check which interrupt happened.
+    AND A, 2            ; Mask the timer bit.
+    CMP A, 2            ; Is it timer?
+    JNE isrexit         ; If not, exit ISR.
+    MOVB BL, [status]   ; Set timer status.
+    ORB BL, 1
+    MOVB [status], BL
+    MOV A, 2            ; Set timer interrupt handelled.
+    OUT 2
+    
+isrexit:
+    POP B               ; Restore register B.
+    POP A               ; Restore register A.
+    IRET                ; Return from ISR.
+    
+gamestart:
+    CALL resetgame
+    
+gameloop:
+    MOVB AL, [status]   ; Check if ball should move
+    ANDB AL, 1          ; Mask the timer bit.
+    CMPB AL, 1          ; Check if timer bit set.
+    JE gametick
+    MOVB AL, [status]   ; Check if key was pressed.
+    ANDB AL, 2          ; Mask the key bit.
+    CMPB AL, 2          ; Check if key bit set.
+    JE gamekey
+    MOVB AL, [status]   ; Check if the game should be reset.
+    ANDB AL, 4          ; Mask the reset bit.
+    CMPB AL, 4          ; Check if reset bit set.
+    JE gamestart
+    MOVB AL, [status]   ; Check if the game should be running.
+    ANDB AL, 8          ; Mask the exit bit.
+    CMPB AL, 8          ; Check if exit bit set.
+    JE shutdown
+    JMP gameloop
+    
+gametick:
+    CALL moveball 
+    MOVB AL, [status]   ; Clear timer status.
+    ANDB AL, 0xFE
+    MOVB [status], AL
+    JMP gameloop
+gamekey:
+    CALL moveracket     ;turn racket
+    MOVB AL, [status]   ; Clear key status.
+    ANDB AL, 0xFD
+    MOVB [status], AL
+    JMP gameloop
+    
+resetgame:
+	MOVB AL, 0x00
+	MOV D, 0x0F00           ; Start of video memory.
+	CALL resetpixel
+	MOV D, 0x0FE5		 	
+    MOVB AL, 0xFF		 
+    MOVB [D], AL
+    INC D
+    MOVB [D], AL       
+    INC D
+    MOVB [D], AL         	; create paddle
+    DEC D			     	;center of paddle  
+    MOVB AL, 0x0BB			; ball color
+    MOV C, 0x0FC8			; ball initial position
+    MOVB [C], AL
+    MOV [ball], C
+    MOV [direction], 1		;ball initial direction
+    CALL setbricks 
+    MOVB [status], 0        ; Reset game status.
+    RET
+    
+setbricks:
+	MOV C, 0
+    MOVB BL, 0xC0
+    setbricksloop:
+    PUSHB BL
+   	MOV B, level1            ; setlevel
+    MOV A, C
+    MUL 2
+    ADD B, A
+    MOV A, [B]
+    CMP A, 0xAA
+    JE brickreturn
+	POPB BL
+    MOVB [A], BL
+    INC C
+    JMP setbricksloop
+    
+brickreturn:
+    POPB BL
+    RET
+
+    
+level1:
+	DW 0x0F22
+    DW 0x0F23
+
+	DW 0x0F26
+    DW 0x0f27
+    
+	DW 0x0F2A
+    DW 0x0F2B
+ 
+
+    
+    DW 0x0F52
+    DW 0x0F53
+
+   	DW 0x0F56
+    DW 0x0f57
+    
+    DW 0x0F5A
+    DW 0x0F5B
+
+    
+    
+
+    
+    DW 0xAA
+    
+level2:
+	DW 0x0F
+    DW 0x0F
+    DW 0x0F 
+    DW 0x0F
+	DW 0x0F 
+    DW 0x0F
+    DW 0x0F
+    DW 0x0F
+    DW 0x0F
+    DW 0x0F
+    
+level3:
+	DW 0x0F
+    DW 0x0F
+    DW 0x0F
+    DW 0x0F
+	DW 0x0F
+    DW 0x0F
+    DW 0x0F
+    DW 0x0F
+    DW 0x0F
+    DW 0x0F
+
+resetpixel:
+    MOVB [D], AL            ; Clear pixel.
+    INC D                   ; Next pixel.
+    CMP D, 0x01000          ; Check if all pixels were processed.
+    JNE resetpixel
+RET
+    
+ball:
+ DW 0
+direction:
+ DW 0
+counter:
+ DW 0
+
+checkcollision:	
+	CALL checkballcollision
+	CALL checkcorners
+	CALL checkcollisiony
+    CALL checkcollisionx
+	RET
+    
+
+
+checkballcollision:
+	upleftball:
+    MOV B, [ball]
+ 	SUBB BL, 1
+ 	SUBB BL, 0x10
+    MOVB CL, [B]
+    CMPB CL, 0xFF
+    JE cornerbounce
+    CMPB CL, 0xC0
+    JE cornerbounce
+    
+    downball:
+    MOV B, [ball]
+    ADDB BL, 0x10
+    MOVB CL, [B]
+    CMPB CL, 0xFF
+    JE setballdirectiony
+    CMPB CL, 0xC0
+    JE setballdirectiony
+    
+    uprightball:
+    MOV B, [ball]
+ 	ADDB BL, 1
+ 	SUBB BL, 0x10
+    MOVB CL, [B]
+    CMPB CL, 0xFF
+    JE cornerbounce
+    CMPB CL, 0xC0
+    JE cornerbounce
+ 	
+    upball:
+    MOV B, [ball]
+    SUBB BL, 0x10 
+    MOVB CL, [B]
+    CMPB CL, 0xFF
+    JE setballdirectiony
+    CMPB CL, 0xC0
+    JE setballdirectiony
+    
+    downleftball:
+    MOV B, [ball]
+ 	SUBB BL, 1
+ 	ADDB BL, 0x10
+    MOVB CL, [B]
+	CMPB CL, 0xFF
+    JE cornerbounce
+    CMPB CL, 0xC0
+    JE cornerbounce
+ 	
+    leftball:
+    MOV B, [ball]
+    SUBB BL, 1
+    MOVB CL, [B]
+	CMPB CL, 0xFF
+    JE setballdirectionx
+    CMPB CL, 0xC0
+    JE setballdirectionx
+    
+    downrightball:
+    MOV B, [ball]
+ 	ADDB BL, 1
+ 	ADDB BL, 0x10
+    MOVB CL, [B]
+	CMPB CL, 0xFF
+    JE cornerbounce
+    CMPB CL, 0xC0
+    JE cornerbounce
+    
+    
+    rightball:
+    MOV B, [ball]
+    ADDB BL, 1
+    MOVB CL, [B]
+	CMPB CL, 0xFF
+    JE setballdirectionx
+    CMPB CL, 0xC0
+    JE setballdirectionx
+	RET
+    
+deletebrick:
+
+    
+ 	PUSH B
+    JMP upleftballbrick
+    
+deletebrickloop:
+ 	POP B
+   	CMP B, 0x00
+    JE return
+    
+return:
+RET
+ upleftballbrick:
+ 	
+    MOV A, B
+ 	SUBB AL, 1
+ 	SUBB AL, 0x10
+    MOVB CL, [A]
+    CMPB CL, 0xC0
+    JE deletebrickyes
+
+
+    
+    downballbrick:
+    
+    MOV A, B
+    ADDB AL, 0x10
+    MOVB CL, [A]
+    CMPB CL, 0xC0
+    JE deletebrickyes
+
+
+    
+    uprightballbrick: 
+    MOV A, B
+ 	ADDB AL, 1
+ 	SUBB AL, 0x10
+    MOVB CL, [A]
+    CMPB CL, 0xC0
+    JE deletebrickyes
+
+ 	
+    upballbrick:
+   
+    MOV A, B
+    SUBB AL, 0x10 
+    MOVB CL, [A]
+    CMPB CL, 0xC0
+    JE deletebrickyes
+
+
+    downleftballbrick:
+ 
+    MOV A, B
+ 	SUBB AL, 1
+ 	ADDB AL, 0x10
+    MOVB CL, [A]
+    CMPB CL, 0xC0
+    JE deletebrickyes
+
+ 	
+    leftballbrick:
+   
+    MOV A, B
+    SUBB AL, 1
+    MOVB CL, [A]
+    CMPB CL, 0xC0
+	JE deletebrickyes
+
+    
+    downrightballbrick:
+  
+    MOV A, B
+ 	ADDB AL, 1
+ 	ADDB AL, 0x10
+    MOVB CL, [A]
+    CMPB CL, 0xC0
+    JE deletebrickyes
+    
+    rightballbrick:
+   
+    MOV A, B
+    ADDB AL, 1
+    MOVB CL, [A]
+    CMPB CL, 0xC0
+    JE deletebrickyes
+  
+    
+deletebrickyes:
+    POP B
+    MOV [B], 0x00
+    MOV [A], 0x00
+    PUSH A
+    
+   	MOV A, [counter]
+    CMP A, 5
+    JE victory
+    INC A
+    MOV [counter], A
+    JMP deletebrickloop
+    RET
+
+
+    
+checkcorners:
+	MOV A, [ball]
+    CMP A, 0x0F00			; check left corner
+    JE cornerbounce
+    CMP A, 0x0F0F			; check right corner
+    JE cornerbounce
+    RET
+    
+cornerbounce:
+	PUSH B
+	MOV B, [direction]
+	CMP B, 1
+    JE setballdirection4
+    CMP B, 2
+    JE setballdirection3
+    CMP B, 3
+    JE setballdirection2
+    CMP B, 4
+    JE setballdirection1
+    
+checkcollisiony:
+	MOV A, [ball]          
+	ANDB AL, 0xF0
+    CMP A, 0x0FF0			
+    JE gameover
+	CMP A, 0x0F00			
+    JE setballdirectiony
+	RET
+    
+setballdirectiony:
+	PUSH B
+	MOV B, [direction]
+	CMP B, 1
+    JE setballdirection3
+    CMP B, 3
+    JE setballdirection1
+    CMP B, 2
+    JE setballdirection4
+    CMP B, 4
+    JE setballdirection2
+    RET
+    
+
+checkcollisionx:
+	MOV A, [ball]          
+	ANDB AL, 0xF 
+    CMP A, 0x0F00			;check left y axis
+    JE setballdirectionx
+	CMP A, 0x0F0F			; checkleft right y axis
+    JE setballdirectionx
+	RET
+    
+setballdirectionx:
+	PUSH B
+	MOV B, [direction]
+	CMP B, 1
+	JE setballdirection2
+    
+    CMP B, 2
+    JE setballdirection1
+    
+	CMP B, 3
+    JE setballdirection4
+    
+	CMP B, 4
+	JE setballdirection3
+    
+    
+    setballdirection1:
+    POP B
+    MOV [direction], 1
+    CMPB CL, 0xC0
+    JE deletebrick
+    RET
+    
+    setballdirection2:
+    POP B
+    MOV [direction], 2
+    CMPB CL, 0xC0
+    JE deletebrick
+    RET
+    
+    setballdirection3:
+    POP B
+    MOV [direction], 3
+    CMPB CL, 0xC0
+    JE deletebrick
+    RET
+    
+    setballdirection4:
+    POP B
+    MOV [direction], 4
+    CMPB CL, 0xC0
+    JE deletebrick
+    RET
+    
+
+moveball:
+	CALL checkcollision
+	MOV B, [ball]
+    MOV [B], 0x00 			;clear behind the ball
+	MOV A, [direction]
+	CMP A, 1
+    JE upleft
+    CMP A, 2
+    JE upright
+    CMP A, 3
+    JE downleft
+    CMP A, 4
+    JE downright
+    RET
+    
+upleft:
+ 	MOV B, [ball]
+ 	SUBB BL, 1
+ 	SUBB BL, 0x10
+ 	MOVB [B], 0xBB
+ 	MOV [ball], B
+ 	RET
+upright:
+ 	MOV B, [ball]
+ 	ADDB BL, 1
+ 	SUBB BL, 0x10
+ 	MOVB [B], 0xBB
+ 	MOV [ball], B
+ 	RET
+downleft:
+ 	MOV B, [ball]
+ 	SUBB BL, 1
+ 	ADDB BL, 0x10
+ 	MOVB [B], 0xBB
+ 	MOV [ball], B
+ 	RET
+downright:
+ 	MOV B, [ball]
+ 	ADDB BL, 1
+ 	ADDB BL, 0x10
+ 	MOVB [B], 0xBB
+ 	MOV [ball], B
+ 	RET
+
+moveracket:
+    MOVB AL, [key]           
+keychleft:
+    CMPB AL, 97               
+    JNE keychright
+    JMP moveleft
+    RET
+keychright:
+    CMPB AL, 100               
+    JNE turnexit
+    JMP moveright
+    RET
+turnexit:
+    RET
+
+moveright:
+	MOV C, D
+    CMP C, 0x0FEE
+    JE movexit
+	DEC C
+    MOVB [C], 0x00
+    INC D
+    MOV C, D
+    INC C
+    MOVB [C], 0xFF
+    
+	RET
+
+moveleft:
+	MOV C, D
+    CMP C, 0x0FE1
+    JE movexit
+	INC C
+    MOVB [C], 0x00
+    DEC D
+    MOV C, D
+    DEC C
+    MOVB [C], 0xFF
+
+	RET
+movexit:
+	RET
+
+;VICTORY
+str_youwin:
+	DB "YOU WIN!"
+    DB 0
+str_gameover:
+    DB "GAME OVER!"
+    DB 0
+
+
+victory:
+    MOV C, str_youwin     	; Pointer to the first character.
+	JMP winorlose
+gameover:
+    MOV C, str_gameover     ; Pointer to the first character.
+	JMP winorlose
+ 
+winorlose:
+    MOV D, 0x0EE3           ; Pointer to text display cell.
+winorloseloop:
+    MOVB AL, [C]            ; Get the character.
+    CMPB AL, 0              ; Check if at the end of the string.
+    JE exitwinorlose         ; If yes, return.
+    MOVB [D], AL            ; Print the character.
+    INC C                   ; Next character.
+    INC D                   ; Next text display cell.
+    JMP winorloseloop
+exitwinorlose:
+    CALL shutdown   		;stop the game from keep going
+	RET
+    
+; ------------------------------------------------------------------------------
